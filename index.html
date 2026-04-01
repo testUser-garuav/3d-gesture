@@ -124,10 +124,10 @@
 
   <canvas id="canvas3d"></canvas>
 
-  <div id="hud">
-    <h2>Gesture Control</h2>
-    <div id="gesture-label">Waiting for hand...</div>
-    <div id="template-label">Template: Heart</div>
+  <!-- Hidden elements referenced by JS -->
+  <div id="hud" style="display:none;">
+    <div id="gesture-label"></div>
+    <div id="template-label"></div>
     <div id="particle-count"></div>
   </div>
 
@@ -141,16 +141,17 @@
     <span>Mouse / Touch</span> — Rotate view
   </div>
 
-  <div id="action-bar">
-    <button class="action-btn" id="btn-firework">Firework</button>
-    <button class="action-btn" id="btn-expand">Expand</button>
-    <button class="action-btn" id="btn-contract">Contract</button>
-    <button class="action-btn" id="btn-color">Change Color</button>
-    <button class="action-btn" id="btn-attract">Attract</button>
-    <button class="action-btn" id="btn-reset">Reset</button>
+  <!-- Hidden buttons still needed by JS -->
+  <div id="action-bar" style="display:none;">
+    <button class="action-btn" id="btn-firework"></button>
+    <button class="action-btn" id="btn-expand"></button>
+    <button class="action-btn" id="btn-contract"></button>
+    <button class="action-btn" id="btn-color"></button>
+    <button class="action-btn" id="btn-attract"></button>
+    <button class="action-btn" id="btn-reset"></button>
   </div>
 
-  <div id="template-bar"></div>
+  <div id="template-bar" style="display:none;"></div>
 
   <div id="camera-preview">
     <video id="webcam" autoplay playsinline muted></video>
