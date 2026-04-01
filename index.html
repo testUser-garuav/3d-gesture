@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Particle System – Hand Gesture Control</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', system-ui, sans-serif; }
+    #canvas3d { display: block; width: 100vw; height: 100vh; }
+
+    /* Camera preview */
+    #camera-preview {
+      position: fixed; bottom: 20px; right: 20px;
+      width: 240px; height: 180px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 12px; overflow: hidden;
+      z-index: 100; opacity: 0.85;
+      background: #111;
+    }
+    #camera-preview video,
+    #camera-preview canvas {
+      width: 100%; height: 100%;
+      object-fit: cover; position: absolute;
+      top: 0; left: 0;
+    }
+    #camera-preview canvas { pointer-events: none; }
+
+    /* HUD */
+    #hud {
+      position: fixed; top: 20px; left: 20px;
+      color: #fff; z-index: 100;
+      pointer-events: none;
+      text-shadow: 0 0 10px rgba(0,0,0,0.8);
+    }
+    #hud h2 { font-size: 14px; opacity: 0.6; margin-bottom: 8px; letter-spacing: 2px; text-transform: uppercase; }
+    #gesture-label {
+      font-size: 28px; font-weight: 700;
+      background: linear-gradient(90deg, #ff6fd8, #3813c2);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      transition: opacity 0.3s;
+    }
+    #template-label {
+      font-size: 18px; margin-top: 6px; opacity: 0.8;
+    }
+    #particle-count {
+      font-size: 12px; margin-top: 4px; opacity: 0.5;
+    }
+
+    /* Controls help */
+    #controls-help {
+      position: fixed; top: 20px; right: 20px;
+      color: rgba(255,255,255,0.6); z-index: 100;
+      font-size: 12px; text-align: right;
+      pointer-events: none;
+      line-height: 1.8;
+    }
+    #controls-help span { color: rgba(255,255,255,0.9); font-weight: 600; }
+
+    /* Action buttons */
+    #action-bar {
+      position: fixed; left: 20px; bottom: 20px;
+      display: flex; flex-direction: column; gap: 6px;
+      z-index: 200;
+    }
+    .action-btn {
+      padding: 10px 18px; border: none; border-radius: 8px;
+      background: rgba(255,255,255,0.15); color: #fff;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.2);
+      transition: all 0.2s; text-align: left;
+    }
+    .action-btn:hover { background: rgba(255,255,255,0.3); }
+    .action-btn:active { background: rgba(255,111,216,0.4); transform: scale(0.95); }
+
+    /* Template selector */
+    #template-bar {
+      position: fixed; bottom: 20px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 8px; z-index: 100;
+      background: rgba(0,0,0,0.5);
+      padding: 8px 16px; border-radius: 30px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .tmpl-btn {
+      width: 40px; height: 40px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.05);
+      color: #fff; font-size: 18px;
+      cursor: pointer; transition: all 0.3s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .tmpl-btn:hover { border-color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.15); }
+    .tmpl-btn.active { border-color: #ff6fd8; background: rgba(255,111,216,0.2); box-shadow: 0 0 15px rgba(255,111,216,0.3); }
+
+    /* Loading */
+    #loading {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #000; z-index: 1000;
+      color: #fff; transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #ff6fd8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Initializing particle system...</div>
+  </div>
+
+  <canvas id="canvas3d"></canvas>
+
+  <div id="hud">
+    <h2>Gesture Control</h2>
+    <div id="gesture-label">Waiting for hand...</div>
+    <div id="template-label">Template: Heart</div>
+    <div id="particle-count"></div>
+  </div>
+
+  <div id="controls-help">
+    <span>Open Hand</span> — Expand particles<br>
+    <span>Fist</span> — Contract particles<br>
+    <span>Peace / V</span> — Next template<br>
+    <span>Thumbs Up</span> — Change colors<br>
+    <span>Pinch</span> — Firework burst<br>
+    <span>Point</span> — Attract to cursor<br>
+    <span>Mouse / Touch</span> — Rotate view
+  </div>
+
+  <div id="action-bar">
+    <button class="action-btn" id="btn-firework">Firework</button>
+    <button class="action-btn" id="btn-expand">Expand</button>
+    <button class="action-btn" id="btn-contract">Contract</button>
+    <button class="action-btn" id="btn-color">Change Color</button>
+    <button class="action-btn" id="btn-attract">Attract</button>
+    <button class="action-btn" id="btn-reset">Reset</button>
+  </div>
+
+  <div id="template-bar"></div>
+
+  <div id="camera-preview">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="hand-overlay"></canvas>
+  </div>
+
+  <!-- Three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
