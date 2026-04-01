@@ -296,8 +296,6 @@ function doReset() {
 
 function log(msg) {
   console.log('[Action] ' + msg);
-  const el = document.getElementById('debug-info');
-  if (el) el.textContent = msg;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -457,12 +455,6 @@ function animate() {
   orbitCtrl.update();
   composer.render();
 
-  // HUD
-  if (frame % 20 === 0) {
-    document.getElementById('particle-count').textContent = PARTICLE_COUNT.toLocaleString() + ' particles';
-    const dbg = document.getElementById('debug-info');
-    if (dbg) dbg.textContent = `gesture=${gestureSmoothed} | expand=${expandFactor} | firework=${fireworkTimer}`;
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -626,11 +618,6 @@ window.addEventListener('resize', () => {
 // ═══════════════════════════════════════════════════════════════════
 //  Boot
 // ═══════════════════════════════════════════════════════════════════
-// Debug display
-const dbg = document.createElement('div');
-dbg.id='debug-info';
-dbg.style.cssText='position:fixed;bottom:220px;right:20px;color:#0f0;font:13px monospace;z-index:999;background:rgba(0,0,0,0.8);padding:8px 12px;border-radius:6px;';
-document.body.appendChild(dbg);
 
 initParticles();
 animate();
