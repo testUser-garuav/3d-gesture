@@ -497,9 +497,12 @@ function drawHand(lm){
 }
 
 const cooldowns = { peace:0, thumbsup:0, pinch:0 };
+let gestureLockedUntil = 0; // global cooldown — ignore all gestures until this time
 
 function onHand(results) {
-  if (performance.now() < keyboardOverrideUntil) return;
+  const now = performance.now();
+  if (now < keyboardOverrideUntil) return;
+  if (now < gestureLockedUntil) return; // skip detection during cooldown
 
   if (results.landmarks && results.landmarks.length > 0) {
     const lm = results.landmarks[0];
@@ -514,7 +517,8 @@ function onHand(results) {
     else gestureHoldTime = 0;
     lastRawGesture = raw;
 
-    if (gestureHoldTime >= 3) {
+    // Require gesture held steady for 8 frames (~0.5s) before acting
+    if (gestureHoldTime >= 8) {
       const prev = gestureSmoothed;
       gestureSmoothed = raw;
 
@@ -524,12 +528,20 @@ function onHand(results) {
       else if (raw === 'point') doAttract(true, handPos.x, handPos.y);
       else { doExpand(false); doContract(false); doAttract(false); }
 
-      // One-shot on change
+      // One-shot on change — lock gestures for 2 seconds after triggering
       if (prev !== raw) {
-        const now = performance.now();
-        if (raw === 'peace' && now-cooldowns.peace > 1000) { cooldowns.peace=now; doNextTemplate(); }
-        if (raw === 'thumbsup' && now-cooldowns.thumbsup > 1000) { cooldowns.thumbsup=now; doCycleColor(); }
-        if (raw === 'pinch' && now-cooldowns.pinch > 800) { cooldowns.pinch=now; doFirework(); }
+        if (raw === 'peace' && now-cooldowns.peace > 2000) {
+          cooldowns.peace=now; doNextTemplate();
+          gestureLockedUntil = now + 2000;
+        }
+        if (raw === 'thumbsup' && now-cooldowns.thumbsup > 2000) {
+          cooldowns.thumbsup=now; doCycleColor();
+          gestureLockedUntil = now + 2000;
+        }
+        if (raw === 'pinch' && now-cooldowns.pinch > 2000) {
+          cooldowns.pinch=now; doFirework();
+          gestureLockedUntil = now + 2000;
+        }
       }
     }
   } else {
@@ -539,14 +551,7 @@ function onHand(results) {
     ctx.clearRect(0,0,overlay.width,overlay.height);
   }
 
-  // Update gesture label
-  const labels = {
-    open:'OPEN HAND — Expanding!', fist:'FIST — Contracting!',
-    peace:'PEACE — Template!', thumbsup:'THUMBS UP — Colors!',
-    pinch:'PINCH — Firework!', point:'POINT — Attract!',
-    none: handDetected ? 'Detecting...' : 'Show your hand...',
-  };
-  document.getElementById('gesture-label').textContent = labels[gestureSmoothed] || labels.none;
+  document.getElementById('gesture-label').textContent = '';
 }
 
 async function initHands() {
