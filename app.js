@@ -82,6 +82,16 @@ let attractActive = false;
 let attractX = 0, attractY = 0, attractZ = 0;
 let fireworkTimer = 0;   // >0 means firework is active
 
+// ─── Two-hand & swipe gesture state ─────────────────────────────
+let handCount = 0;
+let animationPaused = false;       // open palm stops rotation/animation
+let twoHandPrevDist = null;        // for zoom gesture
+let twoHandPrevMidpoint = null;    // for rotation gesture
+let swipePrevX = null;             // for swipe detection
+let swipeCooldown = 0;             // prevent rapid swipes
+let twoHandRotationY = 0;          // accumulated two-hand rotation
+let twoHandZoomOffset = 0;         // accumulated zoom offset
+
 // ═══════════════════════════════════════════════════════════════════
 //  Three.js
 // ═══════════════════════════════════════════════════════════════════
@@ -451,7 +461,24 @@ function animate() {
   geo.attributes.color.needsUpdate = true;
   geo.attributes.size.needsUpdate = true;
 
-  particles.rotation.y += dt * 0.05;
+  // Rotation — paused by open palm, controlled by two hands
+  if (!animationPaused) {
+    particles.rotation.y += dt * 0.05;
+  }
+  particles.rotation.y += twoHandRotationY;
+  twoHandRotationY *= 0.9; // decay
+
+  // Zoom — scale camera distance from orbit target
+  if (twoHandZoomOffset !== 0) {
+    const dir = cam.position.clone().sub(orbitCtrl.target);
+    const dist = dir.length();
+    const newDist = Math.max(5, Math.min(60, dist - twoHandZoomOffset));
+    dir.normalize().multiplyScalar(newDist);
+    cam.position.copy(orbitCtrl.target).add(dir);
+    twoHandZoomOffset *= 0.85;
+    if (Math.abs(twoHandZoomOffset) < 0.005) twoHandZoomOffset = 0;
+  }
+
   orbitCtrl.update();
   composer.render();
 
@@ -467,41 +494,31 @@ function recognizeGesture(lm) {
   const middleTip=lm[12], middlePip=lm[10];
   const ringTip=lm[16], ringPip=lm[14], pinkyTip=lm[20], pinkyPip=lm[18];
 
-  // Finger extended = tip clearly above pip (stricter margin)
   const margin = 0.02;
   const iE = indexTip.y < indexPip.y - margin;
   const mE = middleTip.y < middlePip.y - margin;
   const rE = ringTip.y < ringPip.y - margin;
   const pE = pinkyTip.y < pinkyPip.y - margin;
 
-  // Finger clearly curled = tip below pip
   const iC = indexTip.y > indexPip.y + margin;
   const mC = middleTip.y > middlePip.y + margin;
   const rC = ringTip.y > ringPip.y + margin;
   const pC = pinkyTip.y > pinkyPip.y + margin;
 
   const thE = dist2D(thumbTip, wrist) > dist2D(thumbIp, wrist) * 1.15;
-  const pinchDist = dist2D(thumbTip, indexTip);
 
-  // Pinch: thumb and index very close, other fingers must be curled
-  if (pinchDist < 0.04 && mC && rC && pC) return 'pinch';
-
-  // Peace: only index + middle extended, ring + pinky clearly curled
-  if (iE && mE && rC && pC) return 'peace';
-
-  // Point: only index extended, all others clearly curled
-  if (iE && mC && rC && pC) return 'point';
-
-  // Fist: all fingers clearly curled
+  // Fist: all fingers clearly curled → firework
   if (iC && mC && rC && pC && !thE) return 'fist';
 
-  // Thumbs up: all fingers curled, thumb extended and above index base
-  if (iC && mC && rC && pC && thE && thumbTip.y < indexMcp.y - 0.08) return 'thumbsup';
-
-  // Open hand: all 4 fingers + thumb extended
+  // Open hand: all 4 fingers + thumb extended → stop animation
   if (iE && mE && rE && pE && thE) return 'open';
 
   return 'none';
+}
+
+// Get palm center from landmarks
+function getPalmCenter(lm) {
+  return { x: lm[9].x, y: lm[9].y };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -515,7 +532,6 @@ let lastVidTime = -1;
 const CONNS=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
 function drawHand(lm){
-  ctx.clearRect(0,0,overlay.width,overlay.height);
   if(!lm)return;
   const w=overlay.width,h=overlay.height;
   ctx.strokeStyle='rgba(255,111,216,0.7)';ctx.lineWidth=2;
@@ -527,45 +543,128 @@ function drawHand(lm){
 function onHand(results) {
   if (performance.now() < keyboardOverrideUntil) return;
 
-  if (results.landmarks && results.landmarks.length > 0) {
-    const lm = results.landmarks[0];
-    drawHand(lm);
+  const hands = results.landmarks || [];
+  handCount = hands.length;
 
-    handPos.x = (lm[9].x - 0.5) * 2;
-    handPos.y = -(lm[9].y - 0.5) * 2;
+  // Decrement swipe cooldown
+  if (swipeCooldown > 0) swipeCooldown--;
 
-    const raw = recognizeGesture(lm);
-
-    // Only act when the same gesture is detected consistently (5 consecutive frames)
-    if (raw === lastRawGesture) gestureHoldTime++;
-    else { gestureHoldTime = 0; lastRawGesture = raw; return; }
-    lastRawGesture = raw;
-
-    // Ignore ambiguous/none — only act on confident, held gestures
-    if (raw === 'none') return;
-    if (gestureHoldTime < 5) return;
-
-    const prev = gestureSmoothed;
-    gestureSmoothed = raw;
-
-    // Continuous gestures
-    if (raw === 'open') doExpand(true);
-    else if (raw === 'fist') doContract(true);
-    else if (raw === 'point') doAttract(true, handPos.x, handPos.y);
-    else { doExpand(false); doContract(false); doAttract(false); }
-
-    // One-shot gestures — only fire on transition
-    if (prev !== raw) {
-      if (raw === 'peace') doNextTemplate();
-      if (raw === 'thumbsup') doCycleColor();
-      if (raw === 'pinch') doFirework();
-    }
-  } else {
+  if (hands.length === 0) {
+    // No hands detected — reset states
     gestureSmoothed = 'none';
     gestureHoldTime = 0;
     lastRawGesture = 'none';
-    doExpand(false); doContract(false); doAttract(false);
+    animationPaused = false;
+    twoHandPrevDist = null;
+    twoHandPrevMidpoint = null;
+    swipePrevX = null;
     ctx.clearRect(0,0,overlay.width,overlay.height);
+    document.getElementById('gesture-label').textContent = 'Show your hand...';
+    return;
+  }
+
+  // Draw all detected hands
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  for (const lm of hands) drawHand(lm);
+
+  // ─── TWO HANDS ─────────────────────────────────────────────────
+  if (hands.length >= 2) {
+    const palm1 = getPalmCenter(hands[0]);
+    const palm2 = getPalmCenter(hands[1]);
+    const currentDist = dist2D(palm1, palm2);
+    const midX = (palm1.x + palm2.x) / 2;
+    const midY = (palm1.y + palm2.y) / 2;
+
+    // Zoom: distance between hands changing
+    if (twoHandPrevDist !== null) {
+      const distDelta = currentDist - twoHandPrevDist;
+      // Hands moving apart = zoom in (camera closer), hands closer = zoom out
+      if (Math.abs(distDelta) > 0.001) {
+        twoHandZoomOffset += distDelta * 30;
+        bloom.strength = Math.min(1.5, bloom.strength + Math.abs(distDelta) * 2);
+      }
+    }
+    twoHandPrevDist = currentDist;
+
+    // Rotate: two hands moving sideways together
+    if (twoHandPrevMidpoint !== null) {
+      const dx = midX - twoHandPrevMidpoint.x;
+      const dy = midY - twoHandPrevMidpoint.y;
+      if (Math.abs(dx) > 0.001) {
+        twoHandRotationY += -dx * 5; // horizontal movement rotates Y axis
+      }
+      if (Math.abs(dy) > 0.001) {
+        particles.rotation.x += -dy * 3; // vertical movement rotates X axis
+      }
+    }
+    twoHandPrevMidpoint = { x: midX, y: midY };
+
+    // Reset one-hand states
+    swipePrevX = null;
+    animationPaused = false;
+
+    document.getElementById('gesture-label').textContent = 'Two Hands — Zoom & Rotate';
+    return;
+  }
+
+  // ─── ONE HAND ──────────────────────────────────────────────────
+  twoHandPrevDist = null;
+  twoHandPrevMidpoint = null;
+
+  const lm = hands[0];
+  const palm = getPalmCenter(lm);
+  handPos.x = (lm[9].x - 0.5) * 2;
+  handPos.y = -(lm[9].y - 0.5) * 2;
+
+  const raw = recognizeGesture(lm);
+
+  // Smoothing — require 2 consecutive frames (low latency)
+  if (raw === lastRawGesture) gestureHoldTime++;
+  else { gestureHoldTime = 0; lastRawGesture = raw; }
+  lastRawGesture = raw;
+
+  // ─── Swipe detection (works with any gesture, tracks palm X) ──
+  if (swipePrevX !== null && swipeCooldown <= 0) {
+    const dx = palm.x - swipePrevX;
+    // Swipe threshold — significant horizontal movement
+    if (Math.abs(dx) > 0.06) {
+      if (dx > 0) {
+        doPrevTemplate(); // swipe right (mirrored) = prev
+        log('Swipe Right → Previous template');
+      } else {
+        doNextTemplate(); // swipe left (mirrored) = next
+        log('Swipe Left → Next template');
+      }
+      swipeCooldown = 15; // ~0.25s cooldown at 60fps
+      swipePrevX = palm.x;
+      document.getElementById('gesture-label').textContent = dx > 0 ? 'Swipe → Previous' : 'Swipe ← Next';
+      return;
+    }
+  }
+  swipePrevX = palm.x;
+
+  if (gestureHoldTime < 2) return;
+
+  const prev = gestureSmoothed;
+  gestureSmoothed = raw;
+
+  if (raw === 'open') {
+    // Open palm → stop animation/rotation
+    animationPaused = true;
+    orbitCtrl.autoRotate = false;
+    document.getElementById('gesture-label').textContent = 'Open Palm — Paused';
+  } else if (raw === 'fist') {
+    // Fist → firework (one-shot on transition)
+    animationPaused = false;
+    orbitCtrl.autoRotate = true;
+    if (prev !== 'fist') {
+      doFirework();
+    }
+    document.getElementById('gesture-label').textContent = 'Fist — Firework!';
+  } else {
+    animationPaused = false;
+    orbitCtrl.autoRotate = true;
+    document.getElementById('gesture-label').textContent = 'One Hand';
   }
 }
 
@@ -575,7 +674,7 @@ async function initHands() {
     const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm');
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task', delegate:'GPU' },
-      runningMode:'VIDEO', numHands:1,
+      runningMode:'VIDEO', numHands:2,
     });
     const stream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'user'}});
     videoEl.srcObject = stream;
