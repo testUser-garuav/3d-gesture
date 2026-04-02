@@ -464,15 +464,43 @@ function dist2D(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);}
 
 function recognizeGesture(lm) {
   const wrist=lm[0], thumbTip=lm[4], thumbIp=lm[3], indexTip=lm[8], indexPip=lm[6], indexMcp=lm[5];
-  const middleTip=lm[12], middlePip=lm[10], ringTip=lm[16], ringPip=lm[14], pinkyTip=lm[20], pinkyPip=lm[18];
-  const iE=indexTip.y<indexPip.y, mE=middleTip.y<middlePip.y, rE=ringTip.y<ringPip.y, pE=pinkyTip.y<pinkyPip.y;
-  const thE=dist2D(thumbTip,wrist)>dist2D(thumbIp,wrist)*1.1;
-  const pinch=dist2D(thumbTip,indexTip);
-  if(pinch<0.05) return 'pinch';
-  if(iE&&mE&&!rE&&!pE) return 'peace';
-  if(iE&&!mE&&!rE&&!pE) return 'point';
-  if(!iE&&!mE&&!rE&&!pE){if(thumbTip.y<indexMcp.y-0.05&&thE)return 'thumbsup';return 'fist';}
-  if(iE&&mE&&rE) return 'open';
+  const middleTip=lm[12], middlePip=lm[10];
+  const ringTip=lm[16], ringPip=lm[14], pinkyTip=lm[20], pinkyPip=lm[18];
+
+  // Finger extended = tip clearly above pip (stricter margin)
+  const margin = 0.02;
+  const iE = indexTip.y < indexPip.y - margin;
+  const mE = middleTip.y < middlePip.y - margin;
+  const rE = ringTip.y < ringPip.y - margin;
+  const pE = pinkyTip.y < pinkyPip.y - margin;
+
+  // Finger clearly curled = tip below pip
+  const iC = indexTip.y > indexPip.y + margin;
+  const mC = middleTip.y > middlePip.y + margin;
+  const rC = ringTip.y > ringPip.y + margin;
+  const pC = pinkyTip.y > pinkyPip.y + margin;
+
+  const thE = dist2D(thumbTip, wrist) > dist2D(thumbIp, wrist) * 1.15;
+  const pinchDist = dist2D(thumbTip, indexTip);
+
+  // Pinch: thumb and index very close, other fingers must be curled
+  if (pinchDist < 0.04 && mC && rC && pC) return 'pinch';
+
+  // Peace: only index + middle extended, ring + pinky clearly curled
+  if (iE && mE && rC && pC) return 'peace';
+
+  // Point: only index extended, all others clearly curled
+  if (iE && mC && rC && pC) return 'point';
+
+  // Fist: all fingers clearly curled
+  if (iC && mC && rC && pC && !thE) return 'fist';
+
+  // Thumbs up: all fingers curled, thumb extended and above index base
+  if (iC && mC && rC && pC && thE && thumbTip.y < indexMcp.y - 0.08) return 'thumbsup';
+
+  // Open hand: all 4 fingers + thumb extended
+  if (iE && mE && rE && pE && thE) return 'open';
+
   return 'none';
 }
 
@@ -496,62 +524,49 @@ function drawHand(lm){
   for(const l of lm){ctx.beginPath();ctx.arc(l.x*w,l.y*h,3,0,Math.PI*2);ctx.fill();}
 }
 
-const cooldowns = { peace:0, thumbsup:0, pinch:0 };
-let gestureLockedUntil = 0; // global cooldown — ignore all gestures until this time
-
 function onHand(results) {
-  const now = performance.now();
-  if (now < keyboardOverrideUntil) return;
-  if (now < gestureLockedUntil) return; // skip detection during cooldown
+  if (performance.now() < keyboardOverrideUntil) return;
 
   if (results.landmarks && results.landmarks.length > 0) {
     const lm = results.landmarks[0];
-    handDetected = true;
     drawHand(lm);
 
     handPos.x = (lm[9].x - 0.5) * 2;
     handPos.y = -(lm[9].y - 0.5) * 2;
 
     const raw = recognizeGesture(lm);
+
+    // Only act when the same gesture is detected consistently (5 consecutive frames)
     if (raw === lastRawGesture) gestureHoldTime++;
-    else gestureHoldTime = 0;
+    else { gestureHoldTime = 0; lastRawGesture = raw; return; }
     lastRawGesture = raw;
 
-    // Require gesture held steady for 8 frames (~0.5s) before acting
-    if (gestureHoldTime >= 8) {
-      const prev = gestureSmoothed;
-      gestureSmoothed = raw;
+    // Ignore ambiguous/none — only act on confident, held gestures
+    if (raw === 'none') return;
+    if (gestureHoldTime < 5) return;
 
-      // Continuous gestures
-      if (raw === 'open') doExpand(true);
-      else if (raw === 'fist') doContract(true);
-      else if (raw === 'point') doAttract(true, handPos.x, handPos.y);
-      else { doExpand(false); doContract(false); doAttract(false); }
+    const prev = gestureSmoothed;
+    gestureSmoothed = raw;
 
-      // One-shot on change — lock gestures for 2 seconds after triggering
-      if (prev !== raw) {
-        if (raw === 'peace' && now-cooldowns.peace > 2000) {
-          cooldowns.peace=now; doNextTemplate();
-          gestureLockedUntil = now + 2000;
-        }
-        if (raw === 'thumbsup' && now-cooldowns.thumbsup > 2000) {
-          cooldowns.thumbsup=now; doCycleColor();
-          gestureLockedUntil = now + 2000;
-        }
-        if (raw === 'pinch' && now-cooldowns.pinch > 2000) {
-          cooldowns.pinch=now; doFirework();
-          gestureLockedUntil = now + 2000;
-        }
-      }
+    // Continuous gestures
+    if (raw === 'open') doExpand(true);
+    else if (raw === 'fist') doContract(true);
+    else if (raw === 'point') doAttract(true, handPos.x, handPos.y);
+    else { doExpand(false); doContract(false); doAttract(false); }
+
+    // One-shot gestures — only fire on transition
+    if (prev !== raw) {
+      if (raw === 'peace') doNextTemplate();
+      if (raw === 'thumbsup') doCycleColor();
+      if (raw === 'pinch') doFirework();
     }
   } else {
-    handDetected = false;
     gestureSmoothed = 'none';
+    gestureHoldTime = 0;
+    lastRawGesture = 'none';
     doExpand(false); doContract(false); doAttract(false);
     ctx.clearRect(0,0,overlay.width,overlay.height);
   }
-
-  document.getElementById('gesture-label').textContent = '';
 }
 
 async function initHands() {
